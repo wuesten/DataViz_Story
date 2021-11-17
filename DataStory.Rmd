@@ -1,0 +1,273 @@
+---
+title: "Storytelling_airbnb"
+author: "Tom Wüsten"
+date: "31 10 2021"
+output: html_document
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_folding: show  
+    highlight: tango
+    number_sections: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Examination in Data Visualziation
+
+Storytelling with airbnb data from austin
+
+
+Load Libaries
+```{r }
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(osmdata)   # Access to Open Street Map data
+library(sf)        # Simple Features (data frame with geometries)
+library(mapview)
+library(leaflet)
+library(glue)
+```
+
+Load Airbnb data
+```{r }
+df_listings_bcn <- read_delim(file= "Data/listings_bcn.csv", delim = ",")
+df_calender_bcn <- read_delim(file= "Data/calendar.csv", delim = ",")
+```
+
+```{r}
+df_calender_bcn <- df_calender_bcn %>%
+  mutate(
+    wday = lubridate::wday(date, label=TRUE, abbr=FALSE, week_start = 1),
+    month = month(date, label=TRUE, abbr = FALSE),
+    year = year(date),
+    dayofyear = yday(date))
+```
+
+```{r}
+  df_calender_bcn <- df_calender_bcn %>%
+                 mutate(weekday = wday(date, label = T, week_start = 1), 
+                 month = month(date, label = T, abbr = F),
+                 week = isoweek(date),
+                 day = day(date))
+```
+
+
+```{r}
+check_matching <- df_listings_bcn %>% anti_join(df_calender_bcn, by = c("id" = "listing_id")) 
+df_listings_bcn <- df_listings_bcn %>% left_join(df_calender_bcn, by = c("id" = "listing_id")) 
+```
+
+
+Add Open Street map data
+```{r }
+# Download data and store in project directory
+opq(bbox = 'Barcelona') %>%                                             # Overpass Query
+    add_osm_feature(key = 'boundary', value = 'administrative') %>%  # Desired features
+  add_osm_feature(key = 'admin_level', value = 10) %>%               # Desired features
+  osmdata_xml(filename = 'bcn.osm')                               # Store XML data 
+
+# Read in the data as simple feature object
+bcn_districts <- sf::st_read('bcn.osm', layer = "multipolygons")
+
+# The following line is optional. It makes sure that the data prints in a nice way
+bcn_districts <- bcn_districts %>% as_tibble() %>% sf::st_as_sf()
+bcn_districts
+```
+Join Districts form Geo data with airbnb listings
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r }
+df_listings_neighborhoods <- df_listings_bcn %>% distinct(neighbourhood)
+sf_bcn <- df_listings_bcn %>% anti_join(bcn_districts, by=c("neighbourhood" = "name")) %>% sf::st_as_sf()
+sf_bcn <- df_listings_bcn %>% inner_join(bcn_districts, by=c("neighbourhood" = "name")) %>% sf::st_as_sf()
+```
+
+```{r}
+#PreProcessing
+sf_bcn <- sf_bcn %>% arrange(neighbourhood) %>% mutate()
+```
+
+
+```{r}
+
+
+map <- ggplot(sf_bcn, mapping = aes(fill = 
+                                      sf_bcn$price)) + 
+  geom_sf() +
+  scale_fill_distiller( labels=scales::comma) +
+  labs(x = "Longitude", y = "Latitude", title = "Population per district") +
+  coord_sf(xlim = sf_bcn$longitude, ylim = sf_bcn$latitude, expand = FALSE)
+  theme_bw()
+map
+```
+
+```{r}
+df_listings_bcn <- read_delim(file= "listings_bcn.csv", delim = ",")
+```
+
+
+```{r}
+#  slice location
+ df_loc <- df_listings_bcn %>% 
+   select(neighbourhood, latitude, longitude) %>% 
+   group_by(neighbourhood) %>% 
+   slice(1) %>% 
+   ungroup()
+```
+
+```{r}
+my <- df_listings_bcn %>% filter(host_name == 'Xavier', room_type == 'Private room', name == 'Private room+bath in a cosy appartment')
+```
+
+
+```{r}
+
+df_population <- df_listings_bcn %>% 
+  group_by(neighbourhood) %>% 
+  summarise(Count_per_district = n(), Percent = round((Count_per_district/NROW(df_listings_bcn))*100,1))
+```
+
+
+```{r}
+df_sum_loc <- df_population %>% 
+   left_join(df_loc, by ="neighbourhood")
+```
+
+```{r}
+ get_color <- function(df_sum_loc) {
+   sapply(df_sum_loc$Count_per_district, function(Count) {
+     if(Count <= 50) {
+       "red"
+     } else if(Count <= 200) {
+       "orange"
+     } else if(Count <= 800) {
+       "blue"
+     } else {
+       "green"
+     } })
+ }
+```
+
+```{r}
+# Customize icon colors
+ icons <- awesomeIcons(
+   icon = 'ios-close',
+   iconColor = 'black',
+   library = 'ion',
+   markerColor = get_color(df_sum_loc)
+ )
+```
+
+
+```{r}
+ # Create bin formats
+ bins <- c(0, 50,200,800, 1500)
+ pal <- colorBin(c("red", "orange", "blue", "green"), domain = df_sum_loc$Count, bins = bins)
+ 
+ 
+ my_airbnb <- paste(sep = "<br/>",
+  "<b>My_Airbnb</b>")
+
+
+ 
+ # Title
+ title <- "Airbnb market in Barcelona"
+ # Plot Leaftet Map 
+ leaflet(data = df_sum_loc)%>% 
+   setView(lat = 41.3983991, lng =  2.121622, zoom = 12, options = 
+        leafletOptions(minZoom = 14, dragging = FALSE)) %>% 
+   addTiles() %>% 
+   addAwesomeMarkers(lat   = ~latitude, lng = ~longitude, 
+                     popup = ~paste(as.character(Percent), "%", sep =""), 
+                     label = ~neighbourhood, 
+                     icon  = icons) %>%
+
+  addPopups(2.1426651,41.3690255, my_airbnb,
+    options = popupOptions(closeButton = TRUE)
+  ) %>%
+      
+   addLegend(
+     pal = pal,
+     values = ~Count_per_district,
+     opacity = 1,
+     title = "Number of Listings",
+     position = "bottomright")
+```
+
+```{r}
+available_df_2019 <- df_listings_bcn %>% group_by(date, neighbourhood) %>% summarise(percent = (sum(available == TRUE)/(n())*100), count = n())
+test <- df_listings_bcn %>% distinct(id, .keep_all = TRUE) %>% group_by(neighbourhood) %>% summarise(count = n())
+
+best_neighborhood <- available_df_2019 %>% group_by(neighbourhood) %>% filter(percent >= (40))
+```
+
+
+```{r}
+ggplot(data = df, aes(x = Wochentag, y = 
+Woche_im_Monat, fill = sales) +
+geom_tile() +
+geom_text(aes(label = Day_of_Month))
+facet_wrap(~Monat) 
+```
+
+
+
+```{r}
+theme_calendar <- function(){
+
+ theme(aspect.ratio = 1/2,
+       
+       axis.title = element_blank(),
+       axis.ticks = element_blank(),
+       axis.text.y = element_blank(),
+       axis.text = element_text(family = "Montserrat"),
+       
+       panel.grid = element_blank(),
+       panel.background = element_blank(),
+       
+       strip.background = element_blank(),
+       strip.text = element_text(family = "Montserrat", face = "bold", size = 15),
+       
+       legend.position = "top",
+       legend.text = element_text(family = "Montserrat", hjust = .5),
+       legend.title = element_text(family = "Montserrat", size = 9, hjust = 1),
+       
+       plot.caption =  element_text(family = "Montserrat", hjust = 1, size = 8),
+       panel.border = element_rect(colour = "grey", fill=NA, size=1),
+       plot.title = element_text(family = "Montserrat", hjust = .5, size = 26, 
+                                 face = "bold", 
+                                 margin = margin(0,0,0.5,0, unit = "cm")),
+       plot.subtitle = element_text(family = "Montserrat", hjust = .5, size = 16)
+  )
+}
+```
+
+
+
+```{r}
+    ggplot(dat_pr, 
+           aes(weekday, -week, fill = pcat)) +
+      geom_tile(colour = "white", size = .4)  + 
+      geom_text(aes(label = day, colour = text_col), size = 2.5) +
+      guides(fill = guide_colorsteps(barwidth = 25, 
+                                     barheight = .4,
+                                    title.position = "top")) +
+       scale_fill_manual(values = c("white", col_p(13)),
+                         na.value = "grey90", drop = FALSE) +
+       scale_colour_manual(values = c("black", "white"), guide = FALSE) + 
+       facet_wrap(~ month, nrow = 4, ncol = 3, scales = "free") +
+       labs(title = "How is 2020 being in Santiago?", 
+             subtitle = "Precipitation",
+             caption = "Data: Meteogalicia",
+             fill = "mm") +
+       theme_calendar()
+```
+
+
+
+
